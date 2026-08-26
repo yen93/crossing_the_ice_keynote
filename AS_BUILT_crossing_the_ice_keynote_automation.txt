@@ -1,0 +1,387 @@
+AS-BUILT: Crossing the Ice Keynote Proposal Automation
+========================================================
+Status: reflects the deployed pipeline as of 2026-08-21. This is an
+independent project — it shares no code, credentials file, or database
+table with either the Uncharted Ice automation
+(C:\Users\Cloverly\claude_code\sales_proposals_automation) or the separate,
+pre-existing Interactive Keynote automation
+(C:\Users\Cloverly\claude_code\interactive_keynote_proposal,
+repo yen93/interactive_keynote_proposals_automation, table
+interactive_keynote_proposal_logs, routine
+interactive-keynote-proposals-automation-hourly) — that project was left
+completely untouched during this build and both now run independently,
+per explicit instruction. Uncharted Ice's blueprint (and, structurally, the
+Interactive Keynote project) was used only as a read-only architectural
+reference. Treat divergence between this file and the code as a bug in this
+file.
+
+1. PURPOSE
+----------
+Auto-generates a customized "Crossing the Ice Keynote" sales proposal
+(James Castrission's keynote) in Google Slides from handwritten/typed
+demo-call notes received via email, using a single master template stored in
+Google Drive, with a Supabase audit log and pre-send QA flags.
+
+2. ARCHITECTURE & COMPONENTS
+-----------------------------
+Stack: Python 3.10+ — google-api-python-client, google-auth,
+google-auth-oauthlib, anthropic, supabase, python-dotenv, requests.
+
+Integrations:
+  - Email: Gmail API (OAuth2 refresh-token flow, own .env)
+  - OCR/Entity Extraction: Anthropic Claude API, model claude-opus-5, vision
+  - Storage: Google Drive API
+  - Presentation: Google Slides API
+  - Dedup/Audit: Supabase (Postgres via supabase-py)
+  - Optional enrichment: Fathom API (call recordings), best-effort
+
+Entry point: main.py -> pipeline.run_once() — safe to invoke repeatedly
+(dedup via Supabase makes reruns idempotent).
+
+File/module map:
+  - main.py                    — entry point
+  - pipeline.py                — orchestration + pre-send QA check
+  - config.py                  — env + project_vars.txt loader
+  - oauth_setup.py             — one-time Google OAuth consent flow
+  - inspect_template.py        — debug CLI, dumps shape/image alt-text
+  - src/google_clients.py      — Gmail/Drive/Slides client builder
+  - src/gmail_service.py       — search/download/send/reply
+  - src/ocr_service.py         — Claude vision OCR/extraction
+  - src/drive_service.py       — folder create-or-reuse, upload, master
+                                  template lookup, duplicate
+  - src/slides_rewriter.py     — Claude rewrites slide text + swaps logo
+  - src/logo_service.py        — guesses client logo URL, no network call
+  - src/fathom_service.py      — optional Fathom call-recording match
+  - src/supabase_service.py    — dedup/audit log
+  - db/001_create_crossing_the_ice_keynote_proposal_logs.sql — table migration
+  - .claude/skills/run-crossing-the-ice-keynote-pipeline/SKILL.md — local run
+
+Deployment: pushed to https://github.com/yen93/crossing_the_ice_keynote as
+its own independent repo — no shared history with any sibling automation. A
+scheduled cloud routine "crossing-the-ice-keynote-automation-hourly" has been
+created and mirrors the sibling routines' mechanics (clones the repo fresh
+each run, writes its own .env from credentials embedded in its stored
+job-config prompt, pip installs, runs `python main.py`). It is created
+DISABLED (enabled=false) per explicit instruction — created paused,
+deliberately not live. Enable it at https://claude.ai/code/routines (or via
+the /schedule skill) when ready to go live.
+
+3. THE MASTER TEMPLATE — WHAT WAS ACTUALLY FOUND
+---------------------------------------------------
+The user supplied a Google Slides deck link
+(docs.google.com/presentation/d/16_XJAD76x46CW-ss-B_WAmyNxabFiEQYZQEMAjOxl50),
+titled "Copy of CROSSING THE ICE KEYNOTE (CAS X VISCOUNT)" — a real,
+previously-used proposal (for a past prospect, "Viscount"), not a blank
+template. It was found sitting in the shared "Sales Proposal Templates"
+Drive folder (1kKdzQRH6lgkwOe7DtcRgGbTHfG7gxXyp, used by the general
+Uncharted Ice multi-template pipeline) — read only, never written to. It was
+copied (not moved) into this project's own dedicated Templates folder as
+"Crossing the Ice Keynote Template" (file id
+1PSprkOk5gNUao6tAvCmT6kGNjVdiRxa16jMdShxQlrQ at time of writing).
+
+8 slides: cover -> speaker bio -> "Inspire your audience" / showreel ->
+"Crossing the Ice" story + Learning Outcomes -> client testimonials ->
+Conference Gifts -> Your Investment (pricing/design/delivery) -> Thank
+you/contact.
+
+Investigation (full shape/image dump via inspect_template.py + downloading
+and visually inspecting the two recurring small image assets) found:
+  - NO leftover client-name text mention anywhere in the deck's editable
+    text (unlike the sibling Interactive Keynote deck's "HMW Group"
+    mention) — every text shape is fully generic/static.
+  - The cover slide's date line ("6-7 August 2026") IS a real leftover
+    date from the deck's last use, held as plain editable text (not an
+    image) — this is the closest thing to a personalization surface in the
+    text layer.
+  - Two small images recur together across exactly 5 slides (cover + the 4
+    content slides: "Inspire your audience", "Crossing the Ice", "Conference
+    Gifts", "Your Investment" — NOT the bio, testimonials, or thank-you
+    slides): one sized ~43550x14400 EMU (a transparent/white-on-white "My
+    Adventure Group" watermark — renders blank against a white background)
+    and one sized ~12875x12200 EMU, confirmed by downloading and viewing it
+    to be the leftover "Viscount" company logo. Neither had alt-text set.
+  - The 5 square (~12875x12200 EMU) client-logo image objectIds —
+    g3f2dab8a84e_0_0, _0_3, _0_5, _0_7, _0_11 — were tagged with
+    alt-text/description "client_logo" via a one-time
+    updatePageElementAltText batchUpdate on the COPY only (the user's
+    original file, and the shared Templates folder, were never modified).
+    This matches the sibling automations' detection convention
+    (title/description containing "logo"/"client_logo"/"client logo") in
+    slides_rewriter.find_logo_placeholders().
+
+Consequence for slides_rewriter.py's prompt: since there's no static
+leftover client-name text to find-and-replace, the rewrite prompt instructs
+Claude to (a) look for a leftover client/org name mention and replace it if
+one exists, (b) update the cover-slide date to the new event_date if the
+demo notes provided one, and (c) return every other shape byte-for-byte
+unchanged — confirmed correct by the live test in section 9 (only the date
+changed; pricing, testimonials, bio, and every other shape came back
+identical).
+
+4. WORKFLOW (STEP BY STEP)
+----------------------------
+Trigger: Gmail search (config.GMAIL_TRIGGER_QUERY) + Supabase dedup check
+against crossing_the_ice_keynote_proposal_logs.message_id.
+
+  A. OCR/extraction (src/ocr_service.py) — downloads the attachment, sends
+     to claude-opus-5 vision via a forced tool call
+     "extract_keynote_demo_notes". Required fields: client_org, summary.
+     Missing/unclear-flagged required fields -> run stops for that email,
+     error reply sent, Supabase logged status="error". (Same inherited
+     caveat as both sibling blueprints: this happens BEFORE the "started"
+     notification thread exists, so an unhandled exception here — e.g. an
+     Anthropic billing error — is not caught and produces no
+     notification/Supabase row for that message. Not yet fixed here either.)
+  B. "Started" Gmail notification — new thread, subject
+     "Automation: Crossing the Ice Keynote Proposal for [client_org]".
+  C. Fathom call-recording match (src/fathom_service.py) — optional,
+     best-effort, skipped entirely if FATHOM_API_KEY is unset.
+  D. Master template lookup (src/drive_service.get_master_template) —
+     finds the single file with "template" in its name in this project's
+     own Templates Drive folder; raises if none or more than one exist.
+  E. Client folder + demo-notes upload — creates or reuses
+     "[client_org] [year]" under this project's own master proposals folder;
+     uploads the original attachment as "[client_org] Demo Call Notes.[ext]".
+  F. Template duplication — copies the master template into the client's
+     folder as "[client_org] Crossing the Ice Keynote Proposal".
+  G. Slide text rewrite (src/slides_rewriter.py) — forced tool call to
+     claude-opus-5; sent as its own batchUpdate. Preserves bullet formatting
+     and shrinks font size (down to 0.7x) when new text runs meaningfully
+     longer than the original, since the Slides API has no working autofit.
+  H. Logo placement — isolated batchUpdate, deliberately separate from G so
+     a bad/unverified logo guess can never roll back a good text rewrite (a
+     Slides batchUpdate is all-or-nothing). Logo domain is guessed from
+     client_org and handed to Slides' replaceImage as an unvalidated Google
+     favicon URL.
+  I. Pre-send QA check — never blocks sending. Flags: no logo guessable;
+     guessed logo couldn't be placed; OR (on every successful placement)
+     "logo was auto-guessed — verify it's actually [client]'s logo"; plus an
+     overflow-risk count if any. Any qa_notes -> Supabase
+     status="needs_review", else "success".
+  J. Final notification + Supabase upsert — reply in the same Gmail thread
+     from step B with the proposal link, an "FYI" block for any Fathom/logo
+     matches, and a QA block if qa_notes exist. Upserts
+     crossing_the_ice_keynote_proposal_logs on message_id.
+
+Error handling: any other unhandled exception inside the try block replies
+in-thread with the error text, logs status="error", is_processed=true. Never
+auto-retried.
+
+5. DATABASE
+------------
+Table: public.crossing_the_ice_keynote_proposal_logs, Supabase project
+aivitcomiywiysrfwqxt ("MAGTestProject") — same shared project as the sibling
+automations, but a brand-new, independent table (created via this build,
+never read from or written to by any other pipeline). See
+db/001_create_crossing_the_ice_keynote_proposal_logs.sql for the exact DDL.
+
+  id, created_at, message_id (unique), is_processed, status, error_message,
+  proposal_link, processed_at, client_org, event_date, logo_replaced
+
+RLS is enabled with no policies added (the pipeline uses the Supabase
+service key, which bypasses RLS).
+
+PRE-EXISTING FINDING (unrelated, not introduced by this project, not
+touched): the Supabase security advisor flags 11 other tables in this same
+shared project with RLS disabled and fully exposed to anon/authenticated
+roles (public.linkedin_posts, public.speakers, public.status,
+public.follow_up_sequence_threads, public.organization_users,
+public.gmail_cache, public.enrichment_log,
+public.enrichment_domain_overrides, public.google_reviews,
+public.activecampaign_deals_group_3,
+public.google_reviews_campaign_clicks). This predates this project and
+belongs to other automations sharing the database — noted here only so it
+isn't lost, deliberately left untouched.
+
+6. PROMPTS
+-----------
+All LLM calls use claude-opus-5 via forced tool_choice calls, embedded as
+Python strings in their respective src/*.py modules:
+
+  1. extract_keynote_demo_notes (src/ocr_service.py) — vision input,
+     transcribes the demo-notes photo/PDF and extracts client_org,
+     contact_name, event_date, location, audience_size, duration, summary,
+     context, raw_transcript, unclear_fields. duration defaults to "60
+     minutes" rather than being flagged unclear.
+  2. match_meeting (src/fathom_service.py) — matches demo notes to a recent
+     Fathom recording by name/contact/date proximity, requires >= "medium"
+     confidence.
+  3. rewrite_slide_text (src/slides_rewriter.py) — see section 3 above for
+     why this prompt is more open-ended than the sibling projects' (no known
+     fixed personalization surface in the text layer besides the cover
+     date): finds any leftover client-name mention (none currently exists)
+     and/or updates the cover date if a real event_date was extracted;
+     returns every other shape byte-for-byte unchanged.
+
+7. DOCUMENT GENERATION
+------------------------
+Google Slides API (batchUpdate) + Drive API (copy/folder management) — no
+docx/pdf export step; the deliverable is the live Slides deck, and the
+"ready" email carries its edit link.
+
+Master template file id: 1PSprkOk5gNUao6tAvCmT6kGNjVdiRxa16jMdShxQlrQ,
+titled "Crossing the Ice Keynote Template", inside this project's own
+Templates folder. Client-logo image objectIds tagged "client_logo":
+g3f2dab8a84e_0_0, g3f2dab8a84e_0_3, g3f2dab8a84e_0_5, g3f2dab8a84e_0_7,
+g3f2dab8a84e_0_11 (one per cover + each of the 4 content slides).
+
+Filename conventions:
+  - Client folder: "[client_org] [year]"
+  - Uploaded original notes: "[client_org] Demo Call Notes.[ext]"
+  - Generated deck: "[client_org] Crossing the Ice Keynote Proposal"
+  - Master template file in Drive: "Crossing the Ice Keynote Template"
+
+Drive folders (all newly created for this project, distinct from every
+sibling's and from the shared "Sales Proposal Templates" folder):
+  - Master: "Crossing the Ice Keynote Proposals"
+    (https://drive.google.com/drive/folders/16xjpO2qFGxPBXRvirx86hc_kmnyXALq6)
+  - Templates subfolder:
+    (https://drive.google.com/drive/folders/1tLUbVmm6PZ-PqqDInX_KDvjV-_GRv-kL)
+
+8. CONFIGURATION, DEPENDENCIES, SECRETS
+------------------------------------------
+.env (secrets, gitignored, never committed):
+  GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN
+  ANTHROPIC_API_KEY
+  SUPABASE_URL, SUPABASE_SERVICE_KEY
+  FATHOM_API_KEY (optional)
+  GMAIL_TRIGGER_QUERY (optional override)
+  FATHOM_LOOKBACK_DAYS (optional, default 30)
+
+project_vars.txt (non-secret, JSON array with one object):
+  demo_notes_recipients (["julienne@myadventuregroup.com.au"]),
+  notification_recipients (["julienne@myadventuregroup.com.au",
+  "jaycel@myadventuregroup.com.au", "liv@myadventuregroup.com.au"]),
+  proj_drive_link, templates_drive_link — pointing at the newly-created
+  Drive folders above.
+
+CREDENTIAL PROVENANCE: the live .env in this project contains credential
+VALUES copied from the same shared Google Workspace identity, Anthropic
+account, Supabase project, and Fathom account already used by the sibling
+automations (sales_proposals_automation and interactive_keynote_proposal) —
+done deliberately to enable a genuine end-to-end test without requiring a
+fresh interactive OAuth consent flow (which needs a local browser and can't
+be completed by an agent). Neither sibling project's own files, repo, table,
+or routine were read from in a way that could mutate them, nor written to at
+all. Rotating credentials on any of these projects affects all of them,
+since they currently share the same underlying accounts.
+
+GMAIL_TRIGGER_QUERY default:
+  has:attachment subject:("Crossing the Ice Keynote demo notes" OR
+  "Crossing the Ice Keynote proposal")
+Chosen to be distinct from Uncharted Ice's (`subject:("attached image")`)
+and Interactive Keynote's (`subject:("interactive keynote" OR "keynote demo
+notes" OR "crossing the ice")`) so all three can share one inbox without
+cross-triggering — this is a best guess at real inbound traffic and should
+be tuned once real usage patterns are known.
+
+9. TESTING PERFORMED
+----------------------
+Real, live infrastructure was provisioned and exercised end to end — not a
+paper design:
+  - New Drive folders "Crossing the Ice Keynote Proposals" + "Templates"
+    created for real.
+  - The user's supplied deck copied into the new Templates folder; its 5
+    client-logo image instances identified (by full shape/image dump +
+    downloading and visually inspecting the two candidate recurring images)
+    and tagged "client_logo" on the copy only.
+  - New Supabase table crossing_the_ice_keynote_proposal_logs created via
+    the Supabase MCP tool; verified via list_tables.
+  - A synthetic test demo-notes image ("Testworthy Pty Ltd", contact Alex
+    Nguyen, event 12 Nov 2026, Melbourne, 120 pax) was emailed to the
+    monitored inbox with a subject matching GMAIL_TRIGGER_QUERY, and
+    `python main.py` was run for real, live, no mocking:
+      * OCR (claude-opus-5) correctly extracted client_org="Testworthy Pty
+        Ltd", event_date="12 Nov 2026", and other fields.
+      * Fathom lookup ran (no confident match, as expected for a fake test
+        client — proceeded without enrichment, non-fatal).
+      * The master template was duplicated into a new
+        "Testworthy Pty Ltd 2026" folder under the project's own master
+        folder, alongside the uploaded demo-notes image.
+      * Slide rewrite: confirmed via a direct Drive content read of the
+        generated deck that ONLY the cover-slide date changed (from
+        "6-7 August 2026" to "12 Nov 2026") — every other shape (bio,
+        "Crossing the Ice" story, Learning Outcomes, all three
+        testimonials, Conference Gifts, DESIGN/DELIVERY bullets, the
+        $8,500/$5,000 pricing lines, and the contact block) came back
+        byte-for-byte identical to the master template.
+      * Logo step guessed domain "testworthy.com.au"; Slides' replaceImage
+        genuinely 404'd server-side for that guessed domain (a real,
+        expected failure mode for a fake test company) — caught by the
+        isolated try/except exactly as designed, logo_replaced=false, and
+        this did NOT roll back or affect the text rewrite (confirmed by
+        the unaffected deck content above).
+      * Supabase row: status="needs_review" (guessed logo could not be
+        placed — a genuine, correctly-flagged outcome, not a bug),
+        client_org="Testworthy Pty Ltd", event_date="12 Nov 2026",
+        logo_replaced=false, proposal_link populated, is_processed=true.
+      * Gmail "started" and "ready" (needs_review) notifications sent in
+        one thread, as designed.
+      * The generated test deck/folder and Supabase row were left in place
+        as reviewable output (same convention as the sibling projects'
+        real test runs) — safe to delete once reviewed.
+  - This project was pushed to its own new, independent GitHub repo
+    (https://github.com/yen93/crossing_the_ice_keynote, confirmed empty
+    beforehand) and pushed via the existing Windows git credential manager.
+  - A cloud routine ("crossing-the-ice-keynote-automation-hourly") was
+    created mirroring the sibling routines' mechanics, confirmed via
+    RemoteTrigger get to be enabled=false (paused, not live) as explicitly
+    instructed.
+
+NOT LIVE-TESTED: a real client scenario with an actual resolvable logo
+domain (to confirm the successful-placement path, not just the
+correctly-handled-failure path already exercised above); the routine
+actually firing on its cloud schedule (deliberately paused); a real leftover
+client-name text mention being found and replaced (none exists in the
+current master template, so this code path is currently untested against
+real content — the OCR/summary/date paths are the ones actually exercised).
+
+10. RUN INSTRUCTIONS
+-----------------------
+1. Ensure .env is populated (see .env.example) — either by running
+   `python oauth_setup.py` for fresh Google credentials, or by pointing at
+   the credential values already present in .env from this build.
+2. `pip install -r requirements.txt`
+3. `python main.py` (or ask Claude Code to run the
+   run-crossing-the-ice-keynote-pipeline skill) — scans Gmail, processes
+   every unprocessed matching email once, exits.
+4. To inspect a deck's shape IDs / verify logo-tag placement:
+   `python inspect_template.py <presentation_id_or_url>`
+
+11. TROUBLESHOOTING
+----------------------
+- "Expected exactly one Crossing the Ice Keynote master template, found N":
+  more than one file with "template" in its name exists in this project's
+  Templates Drive folder — remove/rename the extras.
+- "No file containing 'template' found...": the master template was deleted
+  from this project's Templates folder.
+- Anthropic 400 "credit balance too low": the account behind
+  ANTHROPIC_API_KEY needs topping up — this blocks OCR, Fathom matching, and
+  slide rewriting simultaneously, and (per section 4) can currently crash a
+  run with no notification/log entry if it happens on the very first email
+  of a run.
+- A run reports "needs_review": expected and non-blocking — check the reason
+  in the Gmail reply / Supabase error_message column (usually an unverified
+  or failed logo guess) and fix manually if needed.
+- The scheduled routine exists but is paused — see section 2. Enable it at
+  https://claude.ai/code/routines (or via the /schedule skill) once ready to
+  go live. Before enabling: confirm GMAIL_TRIGGER_QUERY actually matches how
+  demo notes arrive in practice (still a best guess) and decide whether the
+  shared credentials with the sibling automations are acceptable long-term.
+
+12. FUTURE IMPROVEMENTS
+--------------------------
+- Wrap the initial download+OCR call in pipeline.process_email() in its own
+  try/except so an OCR-time failure still produces an error
+  notification/Supabase row (inherited gap from both blueprints, not fixed
+  here).
+- Enable the paused routine once GMAIL_TRIGGER_QUERY is confirmed against
+  real traffic and credential independence is decided.
+- Improve the logo step's hit rate (a more reliable logo source, or a manual
+  upload step) — the favicon-guess approach will keep 404'ing or returning a
+  generic icon for many real domains, always flagged for review.
+- Run a real client scenario through the pipeline (not just the synthetic
+  test in section 9) to confirm the successful-logo-placement path and, if a
+  future edit to the master template reintroduces a leftover client-name
+  text mention, that the rewrite prompt still finds and replaces it
+  correctly.

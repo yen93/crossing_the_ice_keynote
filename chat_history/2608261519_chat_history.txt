@@ -1,0 +1,111 @@
+================================================================================
+CHAT HISTORY EXPORT — 2026-08-26
+Session: Verified client-folder/recipient config against a specific Google
+Drive folder, then repointed the pipeline's client Drive folder and added
+two new notification recipients in project_vars.txt
+================================================================================
+
+--------------------------------------------------------------------------------
+USER:
+Asked (read-only) for two checks: (1) whether the Claude Code routine tied to
+this project folder creates a client folder in
+https://drive.google.com/drive/folders/16xjpO2qFGxPBXRvirx86hc_kmnyXALq6, and
+(2) whether liv@myadventuregroup.com.au, jaycel@myadventuregroup.com.au, and
+julienne@myadventuregroup.com.au are added as recipients in the (GitHub)
+project_vars.
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+Searched the repo for the folder ID and for the recipient email addresses.
+Found that:
+  - The pipeline does create a client folder (via
+    drive_service.create_client_folder, called from pipeline.py), but at the
+    time under a DIFFERENT master folder — the one referenced by
+    proj_drive_link in project_vars.txt
+    (https://drive.google.com/drive/folders/10b_EFl5V31ycHP6AKqY3px7Ypy7ZhPp9).
+    The folder ID the user asked about (16xjpO2qFGxPBXRvirx86hc_kmnyXALq6) did
+    not appear anywhere in the repo.
+  - project_vars.txt only listed julienne@myadventuregroup.com.au in
+    demo_notes_recipients and notification_recipients. liv and jaycel were not
+    present anywhere in the repo.
+  - Also noted the repo had no git remote/commits yet at that point, so there
+    was no separate "GitHub" copy of project_vars.txt to check — the local
+    file was the only copy.
+
+--------------------------------------------------------------------------------
+USER:
+Requested a real change: demo notes PDF and final proposal Google Slides
+created by the routine should be saved in
+https://drive.google.com/drive/folders/16xjpO2qFGxPBXRvirx86hc_kmnyXALq6, the
+routine should create a new folder there named client_org_name + year, and
+jaycel and liv should be added to the project_vars.
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+Entered plan mode. Launched an Explore subagent to map the full pipeline flow
+end to end: pipeline.py's process_email(), src/drive_service.py's
+create_client_folder / upload_file / get_master_template / duplicate_template,
+config.py's project_vars.txt loading (_load_project_vars, PROJ_DRIVE_FOLDER_ID,
+NOTIFICATION_RECIPIENTS, DEMO_NOTES_RECIPIENTS), and the AS_BUILT doc's
+description of folder naming and Drive structure.
+
+Key findings from that exploration:
+  - create_client_folder already builds folders named
+    "{client_org} {year}" — exactly the naming convention requested — and
+    uses config.PROJ_DRIVE_FOLDER_ID as the parent.
+  - Both the demo-notes PDF upload (drive_service.upload_file) and the final
+    proposal Slides deck creation (drive_service.duplicate_template) are
+    called from pipeline.py using the SAME folder["folder_id"] returned by
+    create_client_folder — so changing proj_drive_link in project_vars.txt is
+    sufficient to move both artifacts to the new master folder; no code
+    changes needed.
+  - DEMO_NOTES_RECIPIENTS is loaded from project_vars.txt but never actually
+    referenced anywhere in pipeline.py or gmail_service.py — only
+    NOTIFICATION_RECIPIENTS drives the started/ready/error emails.
+
+Asked the user (AskUserQuestion) which recipient list(s) jaycel and liv should
+be added to, given demo_notes_recipients is effectively dead config. User
+chose "notification_recipients only."
+
+Wrote and got approval for a plan
+(C:\Users\Cloverly\.claude\plans\the-demo-notes-in-harmonic-candy.md) to:
+  1. Update proj_drive_link in project_vars.txt to
+     https://drive.google.com/drive/folders/16xjpO2qFGxPBXRvirx86hc_kmnyXALq6
+  2. Add jaycel@myadventuregroup.com.au and liv@myadventuregroup.com.au to
+     notification_recipients (leaving demo_notes_recipients unchanged)
+  3. Update AS_BUILT_crossing_the_ice_keynote_automation.txt's Drive-folder
+     and recipients sections to match
+
+Caught and fixed a self-introduced typo while drafting the plan (one section
+had "16xjpO2gFGxPBXRvirx86hc_kmnyXALq6" instead of the correct
+"16xjpO2qFGxPBXRvirx86hc_kmnyXALq6") before finalizing.
+
+After plan approval, implemented the changes:
+  - project_vars.txt: proj_drive_link updated to the new folder;
+    notification_recipients now
+    ["julienne@myadventuregroup.com.au", "jaycel@myadventuregroup.com.au",
+    "liv@myadventuregroup.com.au"]; demo_notes_recipients left as-is.
+  - AS_BUILT_crossing_the_ice_keynote_automation.txt: updated the master
+    Drive folder URL and the recipients description to match.
+  - Verified with `python -c "import config; print(config.PROJ_DRIVE_FOLDER_ID);
+    print(config.NOTIFICATION_RECIPIENTS)"` — printed the new folder ID and
+    the three-address recipient list correctly, confirming project_vars.txt
+    parses cleanly.
+
+--------------------------------------------------------------------------------
+USER:
+/dcp — save this chat session and push to GitHub.
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+Checked git status/remote: repo had no commits and no remote configured, so
+per the skill's instructions, stopped and asked the user how to proceed
+instead of adding a remote or pushing unilaterally. User provided a remote
+URL (https://github.com/yen93/crossing_the_ice_keynote) to add as origin.
+Verified .env is gitignored (only .env.example, which is safe, is untracked)
+before staging. Added the remote, wrote this chat history file, and proceeded
+to stage, commit, and push everything as the first commit to this repo.
+
+================================================================================
+END OF EXPORT
+================================================================================
