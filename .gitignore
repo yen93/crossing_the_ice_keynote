@@ -8,3 +8,11 @@ __pycache__/
 
 # Real client demo-notes intake, not a repo asset
 test_demo_notes_for_crossing_the_ice_keynote.pdf
+
+# Loose plaintext secret files that live in the working tree - never commit.
+# (Kept specific so tracked .txt docs like project_vars.txt / as_built.txt /
+# chat_history are unaffected.)
+*api_key*.txt
+*personal_access_token*.txt
+*_token.txt
+\!git config user.email juliennemaea.txt

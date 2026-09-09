@@ -1,0 +1,88 @@
+================================================================================
+AS-BUILT — Crossing the Ice Keynote proposal automation
+Last updated: 2026-09-09
+================================================================================
+
+OVERVIEW
+Gmail-triggered pipeline for James Castrission's "Crossing the Ice" keynote
+sales proposals. For each unprocessed demo-notes email it: OCRs the attached
+handwritten photo/PDF, duplicates the master Google Slides template into a
+per-client Drive folder, rewrites the client-specific text and swaps the
+client logo, optionally enriches from a matching Fathom recording, runs a
+pre-send QA check, emails notifications, and logs dedup/audit state to
+Supabase. Runs once per invocation (main.py); safe to re-run (Supabase dedup).
+
+SCRIPTS
+- main.py — entrypoint; calls pipeline.run_once() once. Requires: .env
+- pipeline.py — orchestrates process_email() for every matching email.
+- config.py — loads .env and project_vars.txt; exposes config constants +
+  require().
+- oauth_setup.py — one-time Google OAuth consent flow to mint
+  GOOGLE_REFRESH_TOKEN. Requires: GOOGLE_CLIENT_ID/SECRET in .env
+- inspect_template.py — debug tool: dumps a presentation's text/image element
+  metadata (object ids, alt-text, sizes) — used to find logo placeholders.
+  Usage: python inspect_template.py <presentation_id_or_url>
+- src/google_clients.py — builds Gmail/Drive/Slides API clients from the
+  stored refresh token (one shared credential).
+- src/gmail_service.py — Gmail search, attachment download, notification
+  threads/replies.
+- src/drive_service.py — master template lookup, per-client folder creation
+  ("{client_org} {year}"), file upload, template duplication.
+- src/ocr_service.py — OpenAI vision OCR + field extraction (model gpt-4o,
+  function calling). Captures client_org, contact_name, client_website,
+  contact_email, event_date, etc. Requires: OPENAI_API_KEY
+- src/slides_rewriter.py — OpenAI text rewrite (gpt-4o) of client-specific
+  shapes + logo swap. Tries each candidate logo URL until one places.
+  Requires: OPENAI_API_KEY
+- src/logo_service.py — builds priority-ordered candidate logo URLs from
+  ocr_fields (client_website > contact_email domain > org-name slug); optional
+  logo.dev real-logo when LOGODEV_TOKEN set, else Google favicon. Makes no
+  network call itself (URLs fetched server-side by Slides' replaceImage).
+- src/fathom_service.py — lists recent Fathom recordings and uses OpenAI
+  (gpt-4o) to pick the one matching the demo notes. Requires: FATHOM_API_KEY
+  (optional — skipped if unset), OPENAI_API_KEY
+- src/supabase_service.py — dedup/audit logging (is_processed, status, etc.).
+  Requires: SUPABASE_URL, SUPABASE_SERVICE_KEY
+- db/001_create_crossing_the_ice_keynote_proposal_logs.sql — table DDL.
+
+EXTERNAL INTEGRATIONS
+- OpenAI (api.openai.com) — REST via the `openai` SDK, model gpt-4o, function
+  calling; used for OCR/vision, slide-text rewrite, and Fathom matching.
+  Credential OPENAI_API_KEY in .env (gitignored). NOTE: the cloud routine
+  environment must have api.openai.com on its allowed egress list.
+- Google Workspace — Gmail + Drive + Slides via google-api-python-client;
+  OAuth client id/secret + refresh token in .env (gitignored).
+- Supabase (project aivitcomiywiysrfwqxt) — via the `supabase` SDK;
+  SUPABASE_URL + SUPABASE_SERVICE_KEY in .env (gitignored).
+- Fathom (api.fathom.ai/external/v1) — REST; FATHOM_API_KEY in .env
+  (gitignored). Optional enrichment; pipeline proceeds without it.
+- logo.dev (optional) — real brand logos by domain; LOGODEV_TOKEN in .env
+  (gitignored). When unset, only keyless Google favicons are used.
+
+DATA STORES
+- Supabase table crossing_the_ice_keynote_proposal_logs — one row per Gmail
+  message_id (unique); tracks is_processed, status
+  (success|error|needs_review), error_message, proposal_link, client_org,
+  event_date, logo_replaced. Drives dedup and audit.
+- Google Drive — per-client folders named "{client_org} {year}" under the
+  master folder (PROJ_DRIVE_FOLDER_ID from project_vars.txt); each holds the
+  uploaded demo-notes file and the duplicated proposal deck.
+
+AUTOMATIONS / ROUTINES
+- crossing-the-ice-keynote-automation-hourly (Claude Code cloud routine,
+  trigger trig_01SJiDxNiKbNHHtBiUT2je93; fired by the proposal-router-hourly
+  routine). Clones this repo (branch master), writes a .env from credentials
+  embedded in the routine prompt, runs `pip install -r requirements.txt` then
+  `python main.py`. Uses OpenAI — requires api.openai.com allowed egress on
+  the "Default" environment (env_01DYHNjMesGeuq9ABo7W6m6f). The embedded .env
+  and all routine secrets live only in the routine config (claude.ai), never
+  in this repo.
+
+CONFIG
+- project_vars.txt — proj_drive_link, templates_drive_link, notification and
+  demo-notes recipient lists. Loaded by config.py.
+- .env (gitignored) — all live credentials (see .env.example for the keys).
+- Loose plaintext secret files that sit untracked in the repo root
+  (openai_api_key.txt, a GitHub PAT file, a stray-named file) are gitignored
+  so they cannot be committed; they are not part of the app's runtime config.
+================================================================================

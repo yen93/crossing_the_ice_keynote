@@ -1,0 +1,197 @@
+================================================================================
+CHAT HISTORY EXPORT — 2026-09-09
+Session: Migrated the pipeline's LLM usage from the Anthropic API to OpenAI
+(OCR, slide-text rewrite, Fathom matching); updated the hourly cloud routine
+to match; opened OpenAI egress; fixed a wrong client logo on a live proposal
+and hardened the logo-resolution logic.
+================================================================================
+
+NOTE ON REDACTIONS: This session repeatedly surfaced live credentials — the
+project's .env contents and the cloud routine's embedded .env were read and
+displayed in full, and the OpenAI API key file was opened. Every real secret
+value (Google OAuth client id/secret/refresh token, Anthropic API key, OpenAI
+API key, Supabase service key, Fathom API key, and a GitHub fine-grained PAT
+that exists as a loose file in the repo) has been replaced below with a
+[REDACTED_*] placeholder. No real secret value is written in this file.
+
+--------------------------------------------------------------------------------
+USER:
+"I used up my Claude API key credits. Please switch to OpenAI for all OCR or
+any other use that the Claude API key was doing." Pointed to the OpenAI key
+file at openai_api_key.txt.
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+Searched the repo and found three files using the Anthropic SDK, all calling
+anthropic.Anthropic + client.messages.create with tool-use:
+  - src/ocr_service.py   — vision OCR of the handwritten demo-notes photo/PDF
+  - src/slides_rewriter.py — client-specific slide text rewrite
+  - src/fathom_service.py  — matching a Fathom recording to the demo notes
+
+Converted all three to the OpenAI SDK (chat.completions + function calling,
+model gpt-4o): image sent as a base64 image_url, PDF as a base64 file part;
+Anthropic "tool" schema (name/description/input_schema) rewritten as OpenAI
+function tools ({type:function, function:{name,description,parameters}}); tool
+results read from response.choices[0].message.tool_calls[0].function.arguments
+via json.loads. Supporting edits: config.py gained OPENAI_API_KEY (kept the
+now-unused ANTHROPIC_API_KEY for easy revert); requirements.txt swapped
+anthropic for openai>=1.40.0; .env.example reworded to OpenAI; added
+OPENAI_API_KEY=[REDACTED_OPENAI_API_KEY] to the local .env. Committed only the
+six changed source files (deliberately excluding the loose *.txt secret files
+in the working tree). Verified: all files compile, openai 3.8.0 installed, the
+key loads via config, all service modules import cleanly. Flagged that several
+loose plaintext secret files (openai_api_key.txt, a GitHub PAT file, a
+stray-named file) sit untracked and un-gitignored in the repo root, and
+suggested rotating exposed keys.
+
+--------------------------------------------------------------------------------
+USER:
+(After switching default model to Opus 4.8.) "Please update the
+crossing-the-ice-keynote-automation-hourly routine so it never uses the
+Anthropic API key anymore." Reported a manual test: the pipeline ran (Gmail,
+Drive, Supabase all worked) but OCR failed with "Your credit balance is too
+low to access the Anthropic API" — a billing error, not the ~7-day
+refresh-token expiry the routine anticipates. 6 matching emails were found;
+all already logged in Supabase, none completed.
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+Established that the cloud routine clones github.com/yen93/crossing_the_ice_keynote
+(default branch master), writes a .env with credentials embedded directly in
+the routine's PROMPT, then runs `pip install -r requirements.txt` and
+`python main.py`. So making it "never use Anthropic" required two changes
+together: (1) push the OpenAI code to master (the routine pulls committed
+code, not the local working tree), and (2) rewrite the routine prompt to embed
+OPENAI_API_KEY instead of ANTHROPIC_API_KEY.
+
+Verified git: origin = the routine's repo; default branch master; local main,
+origin/main, origin/master all on the same commit (no divergence). Also read
+src/supabase_service.py and confirmed mark_processed sets is_processed=true
+even on error, so the 6 failed emails would NOT auto-reprocess after the fix.
+
+Asked the user (AskUserQuestion) to confirm: (a) push OpenAI code to master +
+update the routine, and (b) whether to reset the stuck error rows. User chose
+"Yes, do both" and "Reset the error rows."
+
+Executed:
+  - Committed the OpenAI code and pushed to origin main and origin/master
+    (commit 5b1298d).
+  - Updated the routine (trigger trig_01SJiDxNiKbNHHtBiUT2je93) via the
+    remote-trigger API: embedded .env now carries
+    OPENAI_API_KEY=[REDACTED_OPENAI_API_KEY] in place of
+    ANTHROPIC_API_KEY=[REDACTED_ANTHROPIC_API_KEY]; wording changed to "OCRs
+    via OpenAI vision" / "OpenAI ... accounts". Schedule, MCP connections, and
+    repo source preserved. (The embedded .env still carries the other live
+    credentials by design: GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN, SUPABASE_URL
+    + SERVICE_KEY, FATHOM_API_KEY — all [REDACTED_*] here.)
+  - Reset the 5 Supabase rows with status='error' and the billing message back
+    to is_processed=false (the report said 6; the table actually held 5
+    billing-failed rows).
+
+--------------------------------------------------------------------------------
+USER:
+"Please mark all pending ones as done in the db. I will manually test the
+routine myself."
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+Ran an UPDATE flipping every is_processed=false row back to is_processed=true
+(the 5 just-reset error rows), so nothing is pending and the routine won't
+auto-reprocess while the user tests manually.
+
+--------------------------------------------------------------------------------
+USER:
+Pasted a failed routine run URL (session_01V3QUgYuqzQAQRJdL4qSf8v): "error".
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+Pulled the run log. Diagnosis: the OpenAI migration WORKS — main.py ran,
+Gmail/Drive/Supabase succeeded, it used the OpenAI vision path. The only
+failure was that the cloud sandbox's outbound egress policy blocks
+api.openai.com (proxy returned 403 policy denial); the proxy allowlist
+included api.anthropic.com but not api.openai.com. Compared against the
+working hunter_io_email_finder routine (whose prompt notes api.hunter.io is a
+declared allowed egress URL) and concluded api.openai.com must be added to the
+environment's egress allowlist. Told the user this is an owner setting in the
+Claude Code web UI (Environments → Default → allowed egress domains) that I
+can't change via the routine API, and that their LOCAL manual test would work
+regardless since the block is sandbox-only.
+
+--------------------------------------------------------------------------------
+USER:
+"Should I add openai to Allowed domains in the Default environment?"
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+Yes — add exactly api.openai.com (the only host the SDK contacts; images/PDFs
+are sent inline as base64, so no other OpenAI domains are needed). Noted it
+only permits outbound connections (the API key still authenticates), that the
+Default environment is shared with sibling routines (harmless), and that it
+mirrors how api.hunter.io was already allowed.
+
+--------------------------------------------------------------------------------
+USER:
+"Added api.openai.com. It worked. But the proposal it created did not put the
+right company logo for slides 1,3,4,6,7." Pasted the proposal Slides URL, and
+added that it still showed the "Viscount" logo.
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+Pulled the run log (session_01HdShxE5rND3gsJXyi5jTyc) and the Supabase row for
+the new email (message 1a084c545f4e2a78, client "Saliba Estate Managers"):
+status needs_review, logo_replaced=false, note "a guessed client logo could
+not be placed on the slides." Explained this is NOT from the OpenAI switch —
+the migration never touched logo_service.py or the logo-swap code; it's a
+pre-existing limitation (logo_service guesses a domain by slugifying the org
+name and builds an unvalidated Google-favicon URL, flagged needs-review by
+design).
+
+Asked the user (AskUserQuestion) how to handle logos going forward and whether
+to fix the current deck. User chose "Real domain from notes + real logo" and
+"Fix this deck too." User also clarified the leftover logo was "Viscount" (the
+deck's previous client).
+
+Inspected the deck with inspect_template.py: the logo placeholders ARE
+correctly tagged (title='client_logo' on exactly slides 1/3/4/6/7, object ids
+g3f2dab8a84e_0_0/_3/_5/_7/_11), so find_logo_placeholders found them — the
+failure was purely replaceImage failing on the wrong/dead URL, and because the
+batch is all-or-nothing all 5 kept the Viscount logo.
+
+Fix for this deck: web-searched and found the real company is "Saliba Estate
+Agents" at saliba.com.au (the pipeline had guessed the non-existent
+salibaestatemanagers.com.au). Clearbit's logo API is dead (connection failed);
+scraped the site and found a transparent PNG logo
+(Saliba-Transparent-1024x219.png, verified HTTP 200 image/png). Applied
+replaceImage (CENTER_INSIDE) to all 5 placeholders via a local script using
+the project's GoogleClients; updated the Supabase row to status=success,
+logo_replaced=true, error_message=null.
+
+Pipeline hardening (committed 5eb2613, pushed to main + master):
+  - ocr_service.py: OCR now captures client_website and contact_email.
+  - logo_service.py: resolve the domain from website > contact email (skipping
+    generic mail hosts) > org-name slug; return a priority-ordered list of
+    candidate logo URLs (optional logo.dev real-logo when LOGODEV_TOKEN is set,
+    then keyless favicon) for every candidate domain. No outbound call from the
+    process (URLs are fetched server-side by Slides, so no sandbox egress).
+  - slides_rewriter.py: rewrite() now takes logo_urls (list) and tries each in
+    turn (one batch per URL) until one places.
+  - pipeline.py/config.py/.env.example: pass ocr_fields through; add optional
+    LOGODEV_TOKEN.
+  Verified compile + unit-tested the resolution across website/email/generic-
+  email/name-only cases. Offered to wire LOGODEV_TOKEN into the routine and to
+  gitignore the loose secret files.
+
+--------------------------------------------------------------------------------
+USER:
+/dcp — save this chat session, update as_built/CLAUDE.md, commit and push.
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+Wrote this redacted chat-history file, created as_built.txt and CLAUDE.md,
+added the loose plaintext secret files to .gitignore (second security gate,
+so they can't be committed), then staged the documentation + .gitignore,
+committed, and pushed.
+
+================================================================================
+END OF EXPORT
+================================================================================
