@@ -221,7 +221,7 @@ def _build_logo_requests(logo_ids: list[str], logo_url: str) -> list[dict]:
 FLAG_RATIO = 1.5
 
 
-def rewrite(slides, file_id: str, ocr_fields: dict, logo_url: str = None) -> dict:
+def rewrite(slides, file_id: str, ocr_fields: dict, logo_urls: list = None) -> dict:
     """Rewrites text (shrinking font size on shapes whose new text runs
     notably longer than the original, since the Slides API has no working
     autofit) and swaps the logo. Returns {text_shapes_updated, logo_replaced,
@@ -230,13 +230,16 @@ def rewrite(slides, file_id: str, ocr_fields: dict, logo_url: str = None) -> dic
     font shrink alone may not be enough.
 
     The text rewrite and the logo swap are deliberately sent as two separate
-    batchUpdate calls, not one. logo_url is only ever a guessed, unverified
-    domain (see logo_service.py) — the Slides API only discovers it's
+    batchUpdate calls, not one. logo_urls are only ever guessed, unverified
+    URLs (see logo_service.py) — the Slides API only discovers one is
     unusable when it tries to fetch it, and batchUpdate is all-or-nothing,
     so a bad logo URL bundled into the same call would silently roll back
     every text rewrite too, leaving the deck duplicated but unedited. The
     logo call is isolated and non-fatal so a bad guess only costs the logo,
-    never the text."""
+    never the text. logo_urls is a priority-ordered candidate list; we try
+    each (one all-or-nothing batch per URL) until one places, so a dead or
+    wrong URL falls through to the next instead of leaving the previous
+    client's logo in place."""
     presentation = slides.presentations().get(presentationId=file_id).execute()
 
     text_shapes = extract_text_shapes(presentation)
@@ -251,19 +254,26 @@ def rewrite(slides, file_id: str, ocr_fields: dict, logo_url: str = None) -> dic
         ).execute()
 
     logo_replaced = False
-    if logo_url:
+    if logo_urls:
         logo_ids = find_logo_placeholders(presentation)
         if logo_ids:
-            try:
-                slides.presentations().batchUpdate(
-                    presentationId=file_id,
-                    body={"requests": _build_logo_requests(logo_ids, logo_url)},
-                ).execute()
-                logo_replaced = True
-            except Exception:
-                log.exception(
-                    "Guessed logo URL %s could not be applied to %s; leaving placeholder",
-                    logo_url, file_id,
+            for logo_url in logo_urls:
+                try:
+                    slides.presentations().batchUpdate(
+                        presentationId=file_id,
+                        body={"requests": _build_logo_requests(logo_ids, logo_url)},
+                    ).execute()
+                    logo_replaced = True
+                    break
+                except Exception:
+                    log.warning(
+                        "Guessed logo URL %s could not be applied to %s; trying next candidate",
+                        logo_url, file_id,
+                    )
+            if not logo_replaced:
+                log.warning(
+                    "No candidate logo URL could be applied to %s; leaving placeholder",
+                    file_id,
                 )
 
     overflow_risk_ids = [

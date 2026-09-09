@@ -42,6 +42,11 @@ GOOGLE_REFRESH_TOKEN = os.environ.get("GOOGLE_REFRESH_TOKEN", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
+# Optional: logo.dev publishable token. When set, the client-logo step tries a
+# real brand logo from logo.dev before falling back to a Google favicon. When
+# unset, only the (keyless) favicon is used. See logo_service.py.
+LOGODEV_TOKEN = os.environ.get("LOGODEV_TOKEN", "")
+
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 

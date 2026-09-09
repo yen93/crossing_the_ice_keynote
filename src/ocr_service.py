@@ -19,6 +19,22 @@ EXTRACTION_TOOL = {
             "properties": {
             "client_org": {"type": "string", "description": "Client company/organisation name"},
             "contact_name": {"type": "string", "description": "Primary contact person at the client"},
+            "client_website": {
+                "type": "string",
+                "description": (
+                    "Client's website or domain if written anywhere on the page "
+                    "(e.g. 'saliba.com.au' or 'https://www.saliba.com.au'), else empty "
+                    "string. Used to fetch the correct client logo, so transcribe it "
+                    "exactly as written rather than guessing."
+                ),
+            },
+            "contact_email": {
+                "type": "string",
+                "description": (
+                    "Client contact email address if written on the page, else empty "
+                    "string. Its domain is used as a fallback source for the client logo."
+                ),
+            },
             "event_date": {"type": "string", "description": "Event/conference date if mentioned, else empty string"},
             "location": {"type": "string", "description": "Event venue/city, or virtual, if mentioned"},
             "audience_size": {"type": "string", "description": "Audience/delegate size if mentioned"},

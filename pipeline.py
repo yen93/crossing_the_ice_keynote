@@ -88,9 +88,9 @@ def process_email(clients: GoogleClients, supabase, message_id: str, attachment:
             new_name=f"{client_org} Crossing the Ice Keynote Proposal",
         )
 
-        logo = logo_service.find_logo_url(client_org)
+        logo = logo_service.find_logo_url(ocr_fields)
         rewrite_result = slides_rewriter.rewrite(
-            slides, duplicate["file_id"], ocr_fields, logo_url=logo["logo_url"]
+            slides, duplicate["file_id"], ocr_fields, logo_urls=logo["logo_urls"]
         )
 
         # Match notes: purely informational, always shown when a match was found —
@@ -98,13 +98,13 @@ def process_email(clients: GoogleClients, supabase, message_id: str, attachment:
         match_notes = []
         if fathom_notes:
             match_notes.append("a matching Fathom call recording was found and its notes were used as source material for this proposal")
-        if logo["logo_url"] and rewrite_result["logo_replaced"]:
+        if logo["logo_urls"] and rewrite_result["logo_replaced"]:
             match_notes.append(f"a client logo match was found (guessed from domain '{logo['domain']}') and applied to the deck")
 
         # Pre-send QA: never blocks sending, just flags what a human should
         # double-check before this goes out to a real client.
         qa_notes = []
-        if not logo["logo_url"]:
+        if not logo["logo_urls"]:
             qa_notes.append("no client logo could be guessed automatically — add one manually if needed")
         elif not rewrite_result["logo_replaced"]:
             qa_notes.append("a guessed client logo could not be placed on the slides")
